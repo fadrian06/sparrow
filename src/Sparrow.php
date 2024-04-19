@@ -1,5 +1,7 @@
 <?php
 
+use Sparrow\Factory;
+
 /**
  * Sparrow: A simple database toolkit
  *
@@ -29,24 +31,25 @@ class Sparrow {
   /** @var string */
   protected $distinct = '';
 
-  /** @var string */
-  protected $limit = '';
+  /** @var ?int */
+  protected $limit = null;
 
-  /** @var string */
-  protected $offset = '';
+  /** @var ?int */
+  protected $offset = null;
 
   /** @var string */
   protected $sql = '';
 
-  protected $db;
+  /** @var null | mysqli | SQLite3 | PDO | resource */
+  protected $db = null;
 
   /** @var 'pdo' | 'mysqli' | 'mysql' | 'pgsql' | 'sqlite' | 'sqlite3' */
   protected $db_type;
 
-  /** @var object | string */
+  /** @var Memcache | Memcached | string | array<string, mixed> */
   protected $cache;
 
-  /** @var 'memcached' | 'memcache' | 'xcache' */
+  /** @var 'memcached' | 'memcache' | 'xcache' | 'apc' | 'file' | 'array' */
   protected $cache_type;
 
   /**
@@ -56,7 +59,7 @@ class Sparrow {
    *   num_rows: int,
    *   num_changes: int,
    *   avg_query_time: float,
-   *   queries: array<array{time: int, rows: int, changes: int}>
+   *   queries: array<int, array{time: int, rows: int, changes: int}>
    * }
    */
   protected $stats = array(
@@ -64,42 +67,27 @@ class Sparrow {
     'num_queries' => 0,
     'num_rows' => 0,
     'num_changes' => 0,
-    'queries' => array(),
-    'avg_query_time' => 0.0
+    'avg_query_time' => 0.0,
+    'queries' => array()
   );
 
   /** @var float */
   protected $query_time;
 
-  /** @var T */
-  protected $class;
+  /** @var class-string<T> */
+  protected $class = '';
 
-  protected static $db_types = array(
-    'pdo',
-    'mysqli',
-    'mysql',
-    'pgsql',
-    'sqlite',
-    'sqlite3'
-  );
+  /** @var ?string */
+  public $last_query = null;
 
-  protected static $cache_types = array(
-    'memcached',
-    'memcache',
-    'xcache'
-  );
+  /** @var ?int */
+  public $num_rows = null;
 
-  /** @var string */
-  public $last_query;
+  /** @var ?int */
+  public $insert_id = null;
 
-  /** @var int */
-  public $num_rows;
-
-  /** @var int */
-  public $insert_id;
-
-  /** @var int */
-  public $affected_rows;
+  /** @var ?int */
+  public $affected_rows = null;
 
   /** @var bool */
   public $is_cached = false;
@@ -110,8 +98,12 @@ class Sparrow {
   /** @var bool */
   public $show_sql = false;
 
-  /** @var string */
-  public $key_prefix = '';
+  /** @var ?string */
+  public $key_prefix = null;
+
+  static function factory() {
+    return new Factory;
+  }
 
   //////////////////
   // Core Methods //
@@ -123,25 +115,25 @@ class Sparrow {
    * @param string $input Input string to append
    * @return string New SQL statement
    */
-  public static function build($sql, $input) {
-    return strlen($input) > 0 ? "$sql $input" : $sql;
+  protected static function build($sql, $input) {
+    return $input ? "$sql $input" : $sql;
   }
 
   /**
    * Parses a connection string into an object
    *
-   * @param string $connection Connection string
+   * @param string $connection Connection string `driver://user:password@host:port/dbname` or `driver://dbname`
    * @return array{
    *   type: 'mysqli' | 'mysql' | 'pgsql' | 'sqlite' | 'sqlite3' | 'pdomysql' | 'pdopgsql' | 'pdosqlite',
    *   hostname: string | null,
    *   database: string | null,
    *   username: string | null,
    *   password: string | null,
-   *   port: string | null
+   *   port: int | null
    * } Connection information
    * @throws Exception For invalid connection string
    */
-  public static function parseConnection($connection) {
+  protected static function parseConnection($connection) {
     $connection = str_replace('\\', '/', $connection);
     $url = parse_url($connection);
 
@@ -155,7 +147,7 @@ class Sparrow {
       'database' => isset($url['path']) ? substr($url['path'], 1) : null,
       'username' => isset($url['user']) ? $url['user'] : null,
       'password' => isset($url['pass']) ? $url['pass'] : null,
-      'port' => isset($url['port']) ? $url['port'] : null
+      'port' => isset($url['port']) ? (int) $url['port'] : null
     );
 
     static $dbTypes = array(
@@ -199,26 +191,11 @@ class Sparrow {
   /**
    * Checks whether the table property has been set
    *
-   * @return $this Self reference
    * @throws Exception If table is not defined
    */
-  public function checkTable() {
+  protected function checkTable() {
     if (!$this->table) {
       throw new Exception('Table is not defined.');
-    }
-
-    return $this;
-  }
-
-  /**
-   * Checks whether the class property has been set
-   *
-   * @return $this Self reference
-   * @throws Exception If class is not defined
-   */
-  public function checkClass() {
-    if (!$this->class) {
-      throw new Exception('Class is not defined.');
     }
 
     return $this;
@@ -258,7 +235,7 @@ class Sparrow {
    */
   protected function parseCondition($field, $value = null, $join = '', $escape = true) {
     if (is_string($field)) {
-      if ($value === null) {
+      if ($value === '') {
         return "$join " . trim($field);
       }
 
@@ -822,7 +799,16 @@ class Sparrow {
 
     $type = $this->getDbType($db);
 
-    if (!in_array($type, self::$db_types)) {
+    static $db_types = array(
+      'pdo',
+      'mysqli',
+      'mysql',
+      'pgsql',
+      'sqlite',
+      'sqlite3'
+    );
+
+    if (!in_array($type, $db_types)) {
       throw new Exception('Invalid database type.');
     }
 
@@ -1244,8 +1230,9 @@ class Sparrow {
       $this->cache_type = $cache['type'];
     } elseif (is_object($cache)) { // Cache object
       $type = strtolower(get_class($cache));
+      static $cache_types = array('memcached', 'memcache', 'xcache');
 
-      if (!in_array($type, self::$cache_types)) {
+      if (!in_array($type, $cache_types)) {
         throw new Exception('Invalid cache type.');
       }
 
@@ -1479,7 +1466,9 @@ class Sparrow {
    * @return static Populated object
    */
   public function find($value = null, $key = null) {
-    $this->checkClass();
+    if (!$this->class) {
+      throw new Exception('Class is not defined.');
+    }
 
     $properties = $this->getProperties();
 
@@ -1512,10 +1501,11 @@ class Sparrow {
   /**
    * Saves an object to the database.
    *
-   * @param object $object Class instance
+   * @template T of object
+   * @param T $object Class instance
    * @param array $fields Select database fields to save
    */
-  public function save($object, array $fields = null) {
+  public function save($object, array $fields = array()) {
     $this->using($object);
 
     $properties = $this->getProperties();
@@ -1528,12 +1518,11 @@ class Sparrow {
     unset($data[$properties->id_field]);
 
     if ($id === null) {
-      $this->insert($data)
-        ->execute();
+      $this->insert($data)->execute();
 
       $object->{$properties->id_field} = $this->insert_id;
     } else {
-      if ($fields !== null) {
+      if ($fields) {
         $keys = array_flip($fields);
         $data = array_intersect_key($data, $keys);
       }

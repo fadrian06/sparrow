@@ -28,7 +28,10 @@
 	"autoload": {
 		"files": [
 			"src/Sparrow.php"
-		]
+		],
+    "psr-4": {
+      "Sparrow\\": "src"
+    }
 	},
   "autoload-dev": {
     "psr-4": {
