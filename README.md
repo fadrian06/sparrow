@@ -5,7 +5,7 @@ query statistics generator, and micro-ORM all rolled into a single class file.
 
 ## Requirements
 
-Sparrow requires PHP 5.1 or greater.
+Sparrow requires PHP 5.3 or greater.
 
 ## Building SQL
 

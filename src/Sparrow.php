@@ -228,14 +228,14 @@ class Sparrow {
    *
    * @param string | array<string, string> $field Database field
    * @param null | string | array<int, string> $value Condition value
-   * @param string $join Joining word
+   * @param null | string $join Joining word
    * @param bool $escape Escape values setting
    * @return string Condition as a string
    * @throws Exception For invalid where condition
    */
-  protected function parseCondition($field, $value = null, $join = '', $escape = true) {
+  protected function parseCondition($field, $value = null, $join = null, $escape = true) {
     if (is_string($field)) {
-      if ($value === '') {
+      if ($value === null) {
         return "$join " . trim($field);
       }
 
