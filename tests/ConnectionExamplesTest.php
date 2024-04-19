@@ -1,67 +1,91 @@
 <?php
 
+namespace Tests;
+
+use mysqli;
+use PDO;
 use PHPUnit\Framework\TestCase;
-use QueryBuilderExamplesTest as Test;
+use Sparrow;
 
-class ConnectionExamplesTest extends TestCase {
+final class ConnectionExamplesTest extends TestCase {
+  /** @var Sparrow */
+  private $sparrow;
+  private $host;
+  private $user;
+  private $password;
+  private $dbName;
+  private $port;
+
+  function setUp(): void {
+    $this->sparrow = new Sparrow;
+    $this->sparrow->from('user');
+    $this->host = $_ENV['MYSQL_HOST'];
+    $this->user = $_ENV['MYSQL_USER'];
+    $this->password = $_ENV['MYSQL_PASSWORD'];
+    $this->dbName = $_ENV['MYSQL_DBNAME'];
+    $this->port = $_ENV['MYSQL_PORT'];
+  }
+
   function testCanConnectToMysqlDatabaseFromConnectionString() {
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb('mysql://root:root@localhost/test');
+    $this->sparrow->setDb("mysql://$this->user:$this->password@$this->host:$this->port/$this->dbName");
 
-    self::assertInstanceOf('mysqli', $sparrow->getDb());
+    self::assertInstanceOf('mysqli', $this->sparrow->getDb());
   }
 
   function testCanConnectToMysqlDatabaseFromConnectionArray() {
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb(array(
+    $this->sparrow->setDb(array(
       'type' => 'mysql',
-      'hostname' => 'localhost',
-      'database' => 'test',
-      'username' => 'root',
-      'password' => 'root',
-      'port' => 3306
+      'hostname' => $this->host,
+      'database' => $this->dbName,
+      'username' => $this->user,
+      'password' => $this->password,
+      'port' => $this->port
     ));
 
-    self::assertInstanceOf('mysqli', $sparrow->getDb());
+    self::assertInstanceOf('mysqli', $this->sparrow->getDb());
   }
 
   function testCanConnectToMysqlDatabaseFromAConnectionObject() {
-    $mysql = new mysqli('localhost', 'root', 'root');
-    $mysql->select_db('test');
+    $mysql = new mysqli(
+      $this->host,
+      $this->user,
+      $this->password,
+      $this->dbName,
+      $this->port
+    );
 
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb($mysql);
+    $this->sparrow->setDb($mysql);
 
-    self::assertInstanceOf('mysqli', $sparrow->getDb());
+    self::assertInstanceOf('mysqli', $this->sparrow->getDb());
   }
 
   function testCanConnectToMysqlDatabaseFromAPdoConnectionString() {
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb('pdomysql://root:root@localhost/test');
+    $this->sparrow->setDb("pdomysql://$this->user:$this->password@$this->host:$this->password/$this->dbName");
 
-    self::assertInstanceOf('PDO', $sparrow->getDb());
+    self::assertInstanceOf('PDO', $this->sparrow->getDb());
   }
 
   function testCanConnectToMysqlDatabaseFromAPdoObject() {
-    $pdo = new PDO('mysql:host=localhost;dbname=test', 'root', 'root');
+    $pdo = new PDO(
+      "mysql:host=$this->host;port=$this->port;dbname=$this->dbName",
+      $this->user,
+      $this->password
+    );
 
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb($pdo);
+    $this->sparrow->setDb($pdo);
 
-    self::assertInstanceOf('PDO', $sparrow->getDb());
+    self::assertInstanceOf('PDO', $this->sparrow->getDb());
   }
 
   function testCanConnectToSqliteDatabaseFromConnectionString() {
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb('sqlite://' . __DIR__ . '/test.db');
+    $this->sparrow->setDb('sqlite://' . __DIR__ . '/Northwind.db');
 
-    self::assertInstanceOf('SQLite3', $sparrow->getDb());
+    self::assertInstanceOf('SQLite3', $this->sparrow->getDb());
   }
 
   function testCanConnectToSqliteDatabaseFromPdoConnectionString() {
-    $sparrow = Test::sparrow(true);
-    $sparrow->setDb('pdosqlite://' . __DIR__ . '/test.db');
+    $this->sparrow->setDb('pdosqlite://' . __DIR__ . '/Northwind.db');
 
-    self::assertInstanceOf('PDO', $sparrow->getDb());
+    self::assertInstanceOf('PDO', $this->sparrow->getDb());
   }
 }

@@ -2,4 +2,3 @@ vendor
 *.lock
 *.cache
 *.sublime-*
-*.db

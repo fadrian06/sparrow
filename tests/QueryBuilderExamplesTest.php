@@ -1,30 +1,36 @@
 <?php
 
+namespace Tests;
+
 use PHPUnit\Framework\TestCase;
+use Sparrow;
 
-class QueryBuilderExamplesTest extends TestCase {
-  function testCanCreateASparrowInstance() {
-    $sparrow = new Sparrow;
+final class QueryBuilderExamplesTest extends TestCase {
+  /** @var Sparrow */
+  private $sparrow;
 
-    self::assertInstanceOf('Sparrow', $sparrow);
+  function setUp(): void
+  {
+    $this->sparrow = new Sparrow;
+    $this->sparrow->from('user');
   }
 
   function testCanBuildASelectAllQuery() {
-    $result = self::sparrow()->select()->sql();
+    $result = $this->sparrow->select()->sql();
     $expected = 'SELECT * FROM user';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildASingleWhereCondition() {
-    $result = self::sparrow()->where('id', 123)->select()->sql();
+    $result = $this->sparrow->where('id', 123)->select()->sql();
     $expected = 'SELECT * FROM user WHERE id=123';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildMultipleWhereConditions() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('id', 123)
       ->where('name', 'bob')
       ->select()
@@ -37,28 +43,28 @@ class QueryBuilderExamplesTest extends TestCase {
 
   function testCanBuildAWhereConditionFromAnArray() {
     $where = array('id' => 123, 'name' => 'bob');
-    $result = self::sparrow()->where($where)->select()->sql();
+    $result = $this->sparrow->where($where)->select()->sql();
     $expected = "SELECT * FROM user WHERE id=123 AND name='bob'";
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildAWhereConditionFromAString() {
-    $result = self::sparrow()->where('id = 99')->select()->sql();
+    $result = $this->sparrow->where('id = 99')->select()->sql();
     $expected = 'SELECT * FROM user WHERE id = 99';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildAWhereConditionWithACustomOperator() {
-    $result = self::sparrow()->where('id >', 123)->select()->sql();
+    $result = $this->sparrow->where('id >', 123)->select()->sql();
     $expected = 'SELECT * FROM user WHERE id>123';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildAnOrWhereCondition() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('id <', 10)
       ->where('|id >', 20)
       ->select()
@@ -70,7 +76,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildAWhereConditionWithLikeOperator() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('name %', '%bob%')
       ->select()
       ->sql();
@@ -81,7 +87,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildAWhereConditionWithANotLikeOperator() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('name !%', '%bob%')
       ->select()
       ->sql();
@@ -92,7 +98,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildAWhereConditionWithInOperator() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('id @', array(10, 20, 30))
       ->select()
       ->sql();
@@ -103,7 +109,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildAWhereConditionWithNotInOperator() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('id !@', array(10, 20, 30))
       ->select()
       ->sql();
@@ -114,35 +120,35 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildASelectQueryWithSpecifiedFields() {
-    $result = self::sparrow()->select(array('id', 'name'))->sql();
+    $result = $this->sparrow->select(array('id', 'name'))->sql();
     $expected = 'SELECT id,name FROM user';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildASelectQueryWithALimitAndOffset() {
-    $result = self::sparrow()->limit(10)->offset(20)->select()->sql();
+    $result = $this->sparrow->limit(10)->offset(20)->select()->sql();
     $expected = 'SELECT * FROM user LIMIT 10 OFFSET 20';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildASelectQueryWithALimitAndOffsetFromTheSelectMethod() {
-    $result = self::sparrow()->select('*', 50, 10)->sql();
+    $result = $this->sparrow->select('*', 50, 10)->sql();
     $expected = 'SELECT * FROM user LIMIT 50 OFFSET 10';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildASelectQueryWithADistinctField() {
-    $result = self::sparrow()->distinct()->select('name')->sql();
+    $result = $this->sparrow->distinct()->select('name')->sql();
     $expected = 'SELECT DISTINCT name FROM user';
 
     self::assertSame($expected, $result);
   }
 
   function testCanBuildASimpleTableJoinQuery() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->join('role', array('role.id' => 'user.role_id'))
       ->select()
       ->sql();
@@ -153,7 +159,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildATableJoinQueryWithMultipleConditionsAndCustomOperators() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->join('role', array('role.id' => 'user.role_id', 'role.id >' => 10))
       ->select()
       ->sql();
@@ -164,7 +170,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildADescSortedSelectQuery() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->sortDesc('id')
       ->select()
       ->sql();
@@ -175,7 +181,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildAnAscSortedMultipleFieldsSelectQuery() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->sortAsc(array('rank', 'name'))
       ->select()
       ->sql();
@@ -186,7 +192,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildASimpleGroupBySelectQuery() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->groupBy('points')
       ->select(array('id', 'count(*)'))
       ->sql();
@@ -198,7 +204,7 @@ class QueryBuilderExamplesTest extends TestCase {
 
   function testCanBuildASimpleInsertQuery() {
     $data = array('id' => 123, 'name' => 'bob');
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->insert($data)
       ->sql();
 
@@ -211,7 +217,7 @@ class QueryBuilderExamplesTest extends TestCase {
     $data = array('name' => 'bob', 'email' => 'bob@aol.com');
     $where = array('id' => 123);
 
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where($where)
       ->update($data)
       ->sql();
@@ -222,7 +228,7 @@ class QueryBuilderExamplesTest extends TestCase {
   }
 
   function testCanBuildASimpleDeleteQuery() {
-    $result = self::sparrow()
+    $result = $this->sparrow
       ->where('id', 123)
       ->delete()
       ->sql();
@@ -230,19 +236,5 @@ class QueryBuilderExamplesTest extends TestCase {
     $expected = "DELETE FROM user WHERE id=123";
 
     self::assertSame($expected, $result);
-  }
-
-  static function sparrow($new = false) {
-    static $sparrow = null;
-
-    if ($sparrow === null) {
-      $sparrow = new Sparrow;
-    }
-
-    if ($new === true) {
-      return clone $sparrow->from('user');
-    }
-
-    return $sparrow->from('user');
   }
 }

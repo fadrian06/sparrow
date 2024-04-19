@@ -9,31 +9,57 @@ declare(strict_types=1);
  * @license   MIT, http://www.opensource.org/licenses/mit-license.php
  */
 class Sparrow {
-  protected $table;
-  protected $where;
-  protected $joins;
-  protected $order;
-  protected $groups;
-  protected $having;
-  protected $distinct;
-  protected $limit;
-  protected $offset;
-  protected $sql;
+  protected $table = '';
+  protected $where = '';
+  protected $joins = '';
+  protected $order = '';
+  protected $groups = '';
+  protected $having = '';
+  protected $distinct = '';
+  protected $limit = '';
+  protected $offset = '';
+  protected $sql = '';
 
   protected $db;
   protected $db_type;
   /** @var object|string */
   protected $cache;
   protected $cache_type;
-  protected $stats;
+  /**
+   * @var array{
+   *   total_time: int,
+   *   num_queries: int,
+   *   num_rows: int,
+   *   num_changes: int,
+   *   avg_query_time: float,
+   *   queries?: array<array{time: int, rows: int, changes: int}>
+   * }
+   */
+  protected $stats = array(
+    'total_time' => 0,
+    'num_queries' => 0,
+    'num_rows' => 0,
+    'num_changes' => 0,
+    'queries' => array(),
+    'avg_query_time' => 0.0
+  );
   protected $query_time;
   protected $class;
 
+  /** @deprecated */
   protected static $db_types = array(
-    'pdo', 'mysqli', 'mysql', 'pgsql', 'sqlite', 'sqlite3'
+    'pdo',
+    'mysqli',
+    'mysql',
+    'pgsql',
+    'sqlite',
+    'sqlite3'
   );
+
   protected static $cache_types = array(
-    'memcached', 'memcache', 'xcache'
+    'memcached',
+    'memcache',
+    'xcache'
   );
 
   public $last_query;
@@ -78,16 +104,16 @@ class Sparrow {
       throw new Exception('Invalid connection string.');
     }
 
-    $cfg = array();
+    $config = array(
+      'type' => isset($url['scheme']) ? $url['scheme'] : $url['path'],
+      'hostname' => isset($url['host']) ? $url['host'] : null,
+      'database' => isset($url['path']) ? substr($url['path'], 1) : null,
+      'username' => isset($url['user']) ? $url['user'] : null,
+      'password' => isset($url['pass']) ? $url['pass'] : null,
+      'port' => isset($url['port']) ? $url['port'] : null
+    );
 
-    $cfg['type'] = isset($url['scheme']) ? $url['scheme'] : $url['path'];
-    $cfg['hostname'] = isset($url['host']) ? $url['host'] : null;
-    $cfg['database'] = isset($url['path']) ? substr($url['path'], 1) : null;
-    $cfg['username'] = isset($url['user']) ? $url['user'] : null;
-    $cfg['password'] = isset($url['pass']) ? $url['pass'] : null;
-    $cfg['port'] = isset($url['port']) ? $url['port'] : null;
-
-    return $cfg;
+    return $config;
   }
 
   /** Gets the query statistics */
@@ -106,9 +132,11 @@ class Sparrow {
       }
     }
 
-    $this->stats['avg_query_time'] =
-      $this->stats['total_time'] /
-      (float)(($this->stats['num_queries'] > 0) ? $this->stats['num_queries'] : 1);
+    $numQueries = (float) ($this->stats['num_queries'] > 0)
+      ? $this->stats['num_queries']
+      : 1;
+
+    $this->stats['avg_query_time'] = $this->stats['total_time'] / $numQueries;
 
     return $this->stats;
   }
@@ -138,6 +166,8 @@ class Sparrow {
     $this->limit = '';
     $this->offset = '';
     $this->sql = '';
+
+    return $this;
   }
 
   /////////////////////////
@@ -146,67 +176,71 @@ class Sparrow {
   /**
    * Parses a condition statement.
    *
-   * @param string $field Database field
-   * @param string $value Condition value
+   * @param string|array<string, string> $field Database field
+   * @param ?string|array<int, string> $value Condition value
    * @param string $join Joining word
-   * @param boolean $escape Escape values setting
+   * @param bool $escape Escape values setting
    * @return string Condition as a string
    * @throws Exception For invalid where condition
    */
   protected function parseCondition($field, $value = null, $join = '', $escape = true) {
     if (is_string($field)) {
-      if ($value === null) return $join . ' ' . trim($field);
+      if ($value === null) {
+        return "$join " . trim($field);
+      }
 
-      $operator = '';
+      $operator = '=';
 
       if (strpos($field, ' ') !== false) {
         list($field, $operator) = explode(' ', $field);
       }
 
-      if ($operator) {
-        switch ($operator) {
-          case '%':
-            $condition = ' LIKE ';
-            break;
+      switch ($operator) {
+        case '%':
+          $condition = ' LIKE ';
+          break;
 
-          case '!%':
-            $condition = ' NOT LIKE ';
-            break;
+        case '!%':
+          $condition = ' NOT LIKE ';
+          break;
 
-          case '@':
-            $condition = ' IN ';
-            break;
+        case '@':
+          $condition = ' IN ';
+          break;
 
-          case '!@':
-            $condition = ' NOT IN ';
-            break;
+        case '!@':
+          $condition = ' NOT IN ';
+          break;
 
-          default:
-            $condition = $operator;
-        }
-      } else {
-        $condition = '=';
+        default:
+          $condition = $operator;
       }
 
       if (!$join) {
-        $join = ($field[0] === '|') ? ' OR' : ' AND';
+        $join = $field[0] === '|' ? ' OR' : ' AND';
       }
 
       if (is_array($value)) {
-        if (strpos($operator, '@') === false) $condition = ' IN ';
+        if (strpos($operator, '@') === false) {
+          $condition = ' IN ';
+        }
+
         $value = '(' . implode(',', array_map(array($this, 'quote'), $value)) . ')';
-      } else {
-        $value = ($escape && !is_numeric($value)) ? $this->quote($value) : $value;
+      } elseif ($escape && !is_numeric($value)) {
+        $value = $this->quote($value);
       }
 
-      return $join . ' ' . str_replace('|', '', $field) . $condition . $value;
-    } else if (is_array($field)) {
-      $str = '';
+      $field = str_replace('|', '', $field);
+      return "$join {$field}{$condition}{$value}";
+    } elseif (is_array($field)) {
+      $string = '';
+
       foreach ($field as $fieldName => $fieldValue) {
-        $str .= $this->parseCondition($fieldName, $fieldValue, $join, $escape);
+        $string .= $this->parseCondition($fieldName, $fieldValue, $join, $escape);
         $join = '';
       }
-      return $str;
+
+      return $string;
     } else {
       throw new Exception('Invalid where condition.');
     }
@@ -216,11 +250,12 @@ class Sparrow {
    * Sets the table.
    *
    * @param string $table Table name
-   * @param boolean $reset Reset class properties
-   * @return static Self reference
+   * @param bool $reset Reset class properties
+   * @return $this Self reference
    */
   public function from($table, $reset = true) {
     $this->table = $table;
+
     if ($reset) {
       $this->reset();
     }
@@ -232,12 +267,12 @@ class Sparrow {
    * Adds a table join.
    *
    * @param string $table Table to join to
-   * @param array $fields Fields to join on
-   * @param string $type Type of join
-   * @return static Self reference
+   * @param array<string, string> $fields Fields to join on
+   * @param 'INNER'|'LEFT OUTER'|'RIGHT OUTER'|'FULL OUTER' $type Type of join
+   * @return $this Self reference
    * @throws Exception For invalid join type
    */
-  public function join($table, array $fields, $type = 'INNER') {
+  public function join($table, $fields, $type = 'INNER') {
     static $joins = array(
       'INNER',
       'LEFT OUTER',
@@ -249,8 +284,8 @@ class Sparrow {
       throw new Exception('Invalid join type.');
     }
 
-    $this->joins .= ' ' . $type . ' JOIN ' . $table .
-      $this->parseCondition($fields, null, ' ON', false);
+    $condition = $this->parseCondition($fields, null, ' ON', false);
+    $this->joins .= " $type JOIN $table{$condition}";
 
     return $this;
   }
@@ -259,10 +294,10 @@ class Sparrow {
    * Adds a left table join.
    *
    * @param string $table Table to join to
-   * @param array $fields Fields to join on
+   * @param array<string, string> $fields Fields to join on
    * @return static Self reference
    */
-  public function leftJoin($table, array $fields) {
+  public function leftJoin($table, $fields) {
     return $this->join($table, $fields, 'LEFT OUTER');
   }
 
@@ -270,10 +305,10 @@ class Sparrow {
    * Adds a right table join.
    *
    * @param string $table Table to join to
-   * @param array $fields Fields to join on
+   * @param array<string, string> $fields Fields to join on
    * @return static Self reference
    */
-  public function rightJoin($table, array $fields) {
+  public function rightJoin($table, $fields) {
     return $this->join($table, $fields, 'RIGHT OUTER');
   }
 
@@ -281,19 +316,19 @@ class Sparrow {
    * Adds a full table join.
    *
    * @param string $table Table to join to
-   * @param array $fields Fields to join on
+   * @param array<string, string> $fields Fields to join on
    * @return static Self reference
    */
-  public function fullJoin($table, array $fields) {
+  public function fullJoin($table, $fields) {
     return $this->join($table, $fields, 'FULL OUTER');
   }
 
   /**
    * Adds where conditions.
    *
-   * @param string|array $field A field name or an array of fields and values.
-   * @param string $value A field value to compare to
-   * @return static Self reference
+   * @param string|array<string, string> $field A field name or an array of fields and values.
+   * @param ?string|array<int, string> $value A field value to compare to
+   * @return $this Self reference
    */
   public function where($field, $value = null) {
     $join = !$this->where ? 'WHERE' : '';
@@ -303,10 +338,34 @@ class Sparrow {
   }
 
   /**
+   * Adds fields to order by.
+   *
+   * @param string|array<int, string> $field Field name
+   * @param 'ASC'|'DESC' $direction Sort direction
+   * @return $this Self reference
+   */
+  public function orderBy($field, $direction = 'ASC') {
+    $join = !$this->order ? 'ORDER BY' : ',';
+
+    if (is_array($field)) {
+      foreach ($field as $key => $value) {
+        $field[$key] = "$value $direction";
+      }
+    } else {
+      $field .= " $direction";
+    }
+
+    $fields = is_array($field) ? implode(', ', $field) : $field;
+    $this->order .= "$join $fields";
+
+    return $this;
+  }
+
+  /**
    * Adds an ascending sort for a field.
    *
-   * @param string $field Field name
-   * @return static Self reference
+   * @param string|array<int, string> $field Field name
+   * @return $this Self reference
    */
   public function sortAsc($field) {
     return $this->orderBy($field, 'ASC');
@@ -315,49 +374,24 @@ class Sparrow {
   /**
    * Adds an descending sort for a field.
    *
-   * @param string $field Field name
-   * @return static Self reference
+   * @param string|array<int, string> $field Field name
+   * @return $this Self reference
    */
   public function sortDesc($field) {
     return $this->orderBy($field, 'DESC');
   }
 
   /**
-   * Adds fields to order by.
-   *
-   * @param string $field Field name
-   * @param string $direction Sort direction
-   * @return static Self reference
-   */
-  public function orderBy($field, $direction = 'ASC') {
-    $join = !$this->order ? 'ORDER BY' : ',';
-
-    if (is_array($field)) {
-      foreach ($field as $key => $value) {
-        $field[$key] = $value . ' ' . $direction;
-      }
-    } else {
-      $field .= ' ' . $direction;
-    }
-
-    $fields = (is_array($field)) ? implode(', ', $field) : $field;
-
-    $this->order .= $join . ' ' . $fields;
-
-    return $this;
-  }
-
-  /**
    * Adds fields to group by.
    *
-   * @param string|array $field Field name or array of field names
-   * @return static Self reference
+   * @param string|array<int, string> $field Field name or array of field names
+   * @return $this Self reference
    */
   public function groupBy($field) {
     $join = !$this->order ? 'GROUP BY' : ',';
-    $fields = (is_array($field)) ? implode(',', $field) : $field;
+    $fields = is_array($field) ? implode(',', $field) : $field;
 
-    $this->groups .= $join . ' ' . $fields;
+    $this->groups .= "$join $fields";
 
     return $this;
   }
@@ -365,9 +399,9 @@ class Sparrow {
   /**
    * Adds having conditions.
    *
-   * @param string|array $field A field name or an array of fields and values.
-   * @param string $value A field value to compare to
-   * @return static Self reference
+   * @param string|array<string, string> $field A field name or an array of fields and values.
+   * @param ?string|array<int, string> $value A field value to compare to
+   * @return $this Self reference
    */
   public function having($field, $value = null) {
     $join = !$this->having ? 'HAVING' : '';
@@ -379,14 +413,15 @@ class Sparrow {
   /**
    * Adds a limit to the query.
    *
-   * @param int $limit Number of rows to limit
-   * @param int $offset Number of rows to offset
-   * @return static Self reference
+   * @param ?int $limit Number of rows to limit
+   * @param ?int $offset Number of rows to offset
+   * @return $this Self reference
    */
-  public function limit($limit, $offset = null) {
+  public function limit($limit = null, $offset = null) {
     if ($limit !== null) {
-      $this->limit = 'LIMIT ' . $limit;
+      $this->limit = "LIMIT $limit";
     }
+
     if ($offset !== null) {
       $this->offset($offset);
     }
@@ -395,16 +430,17 @@ class Sparrow {
   }
 
   /**
-   * Adds an offset to the query.
+   * Adds an offset to the query
    *
-   * @param int $offset Number of rows to offset
-   * @param int $limit Number of rows to limit
-   * @return static Self reference
+   * @param ?int $offset Number of rows to offset
+   * @param ?int $limit Number of rows to limit
+   * @return $this Self reference
    */
-  public function offset($offset, $limit = null) {
+  public function offset($offset = null, $limit = null) {
     if ($offset !== null) {
-      $this->offset = 'OFFSET ' . $offset;
+      $this->offset = "OFFSET $offset";
     }
+
     if ($limit !== null) {
       $this->limit($limit);
     }
@@ -412,11 +448,9 @@ class Sparrow {
     return $this;
   }
 
-  /**
-   * Sets the distinct keyword for a query.
-   */
+  /** Sets the distinct keyword for a query */
   public function distinct($value = true) {
-    $this->distinct = ($value) ? 'DISTINCT' : '';
+    $this->distinct = $value ? 'DISTINCT' : '';
 
     return $this;
   }
@@ -1294,10 +1328,10 @@ class Sparrow {
         apc_clear_cache();
         break;
 
-      // TODO implement xcache flush
-      // case 'xcache':
-      //   xcache_clear_cache();
-      //   break;
+        // TODO implement xcache flush
+        // case 'xcache':
+        //   xcache_clear_cache();
+        //   break;
 
       case 'file':
         if ($handle = opendir($this->cache)) {
