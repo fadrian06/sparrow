@@ -9,7 +9,7 @@ final class QueryBuilderExamplesTest extends TestCase {
   /** @var Sparrow */
   private $sparrow;
 
-  function setUp(): void
+  function setUp()
   {
     $this->sparrow = new Sparrow;
     $this->sparrow->from('user');

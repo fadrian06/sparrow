@@ -9,7 +9,7 @@ final class QueriesExecutionExamplesTest extends TestCase {
   /** @var Sparrow */
   private $sparrow;
 
-  function setUp(): void {
+  function setUp() {
     $this->sparrow = new Sparrow;
     $this->sparrow->setDb('sqlite://' . __DIR__ . '/Northwind.db');
     $this->sparrow->from('OrderDetails');

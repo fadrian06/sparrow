@@ -23,7 +23,7 @@
 	"license": "MIT",
 	"scripts": {
 		"test": "phpunit --no-progress",
-		"lint": "phpstan -cphpstan.neon --no-progress"
+    "download-composer": "php -r \"if (!file_exists('composer.phar')) { echo '⌛ Downloading composer.phar...', PHP_EOL; `curl -s -O https://getcomposer.org/download/latest-2.2.x/composer.phar`; echo '✓ Download completed', PHP_EOL; }\""
 	},
 	"autoload": {
 		"files": [
@@ -35,15 +35,10 @@
       "Tests\\": "tests"
     }
   },
+  "require": {
+    "php": ">=5.3"
+  },
 	"require-dev": {
-		"phpunit/phpunit": "^10.4",
-		"phpstan/phpstan": "^1.10",
-		"phpstan/extension-installer": "^1.3",
-		"phpstan/phpstan-strict-rules": "^1.5"
-	},
-	"config": {
-		"allow-plugins": {
-			"phpstan/extension-installer": true
-		}
+		"phpunit/phpunit": "4.8.36"
 	}
 }

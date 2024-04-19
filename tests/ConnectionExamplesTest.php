@@ -16,7 +16,7 @@ final class ConnectionExamplesTest extends TestCase {
   private $dbName;
   private $port;
 
-  function setUp(): void {
+  function setUp() {
     $this->sparrow = new Sparrow;
     $this->sparrow->from('user');
     $this->host = $_ENV['MYSQL_HOST'];
