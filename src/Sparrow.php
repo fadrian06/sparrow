@@ -28,8 +28,8 @@ class Sparrow {
   /** @var string */
   protected $having = '';
 
-  /** @var string */
-  protected $distinct = '';
+  /** @var ?string */
+  protected $distinct = null;
 
   /** @var ?int */
   protected $limit = null;
@@ -46,8 +46,8 @@ class Sparrow {
   /** @var 'pdo' | 'mysqli' | 'mysql' | 'pgsql' | 'sqlite' | 'sqlite3' */
   protected $db_type;
 
-  /** @var Memcache | Memcached | string | array<string, mixed> */
-  protected $cache;
+  /** @var null | Memcache | Memcached | string | array<string, mixed> */
+  protected $cache = null;
 
   /** @var 'memcached' | 'memcache' | 'xcache' | 'apc' | 'file' | 'array' */
   protected $cache_type;
@@ -59,7 +59,8 @@ class Sparrow {
    *   num_rows: int,
    *   num_changes: int,
    *   avg_query_time: float,
-   *   queries: array<int, array{time: int, rows: int, changes: int}>
+   *   queries: array<int, array{time: int, rows: int, changes: int}>,
+   *   cached: array<string, string>
    * }
    */
   protected $stats = array(
@@ -68,7 +69,8 @@ class Sparrow {
     'num_rows' => 0,
     'num_changes' => 0,
     'avg_query_time' => 0.0,
-    'queries' => array()
+    'queries' => array(),
+    'cached' => array()
   );
 
   /** @var float */
@@ -109,22 +111,11 @@ class Sparrow {
   // Core Methods //
   //////////////////
   /**
-   * Joins string tokens into a SQL statement
-   *
-   * @param string $sql SQL statement
-   * @param string $input Input string to append
-   * @return string New SQL statement
-   */
-  protected static function build($sql, $input) {
-    return $input ? "$sql $input" : $sql;
-  }
-
-  /**
    * Parses a connection string into an object
    *
    * @param string $connection Connection string `driver://user:password@host:port/dbname` or `driver://dbname`
    * @return array{
-   *   type: 'mysqli' | 'mysql' | 'pgsql' | 'sqlite' | 'sqlite3' | 'pdomysql' | 'pdopgsql' | 'pdosqlite',
+   *   type: string,
    *   hostname: string | null,
    *   database: string | null,
    *   username: string | null,
@@ -150,6 +141,8 @@ class Sparrow {
       'port' => isset($url['port']) ? (int) $url['port'] : null
     );
 
+    $config['type'] = strtolower($config['type']);
+
     static $dbTypes = array(
       'mysql',
       'mysqli',
@@ -161,7 +154,12 @@ class Sparrow {
       'pdopgsql'
     );
 
-    if (!in_array($config['type'], $dbTypes)) {
+    static $cacheTypes = array(
+      'memcache',
+      'memcached'
+    );
+
+    if (!in_array($config['type'], $dbTypes) && !in_array($config['type'], $cacheTypes)) {
       throw new Exception("Invalid type {$config['type']}.");
     }
 
@@ -245,26 +243,16 @@ class Sparrow {
         list($field, $operator) = explode(' ', $field);
       }
 
-      switch ($operator) {
-        case '%':
-          $condition = ' LIKE ';
-          break;
+      static $operators = array(
+        '%' => ' LIKE ',
+        '!%' => ' NOT LIKE ',
+        '@' => ' IN ',
+        '!@' => ' NOT IN '
+      );
 
-        case '!%':
-          $condition = ' NOT LIKE ';
-          break;
-
-        case '@':
-          $condition = ' IN ';
-          break;
-
-        case '!@':
-          $condition = ' NOT IN ';
-          break;
-
-        default:
-          $condition = $operator;
-      }
+      $condition = key_exists($operator, $operators)
+        ? $operators[$operator]
+        : $operator;
 
       if (!$join) {
         $join = $field[0] === '|' ? ' OR' : ' AND';
@@ -333,7 +321,9 @@ class Sparrow {
       'FULL OUTER'
     );
 
-    if (!in_array($type, $joins, true)) {
+    $type = strtoupper($type);
+
+    if (!in_array($type, $joins)) {
       throw new Exception('Invalid join type.');
     }
 
@@ -400,6 +390,7 @@ class Sparrow {
    */
   public function orderBy($field, $direction = 'ASC') {
     static $directions = array('ASC', 'DESC');
+    $direction = strtoupper($direction);
 
     if (!in_array($direction, $directions)) {
       throw new Exception('Invalid direction.');
@@ -457,7 +448,7 @@ class Sparrow {
   }
 
   /**
-   * Adds having conditions
+   * Add having conditions
    *
    * @param string | array<string, string> $field A field name or an array of fields and values.
    * @param null | string | array<int, string> $value A field value to compare to
@@ -473,11 +464,11 @@ class Sparrow {
   /**
    * Adds a limit to the query.
    *
-   * @param ?int $limit Number of rows to limit
+   * @param int $limit Number of rows to limit
    * @param ?int $offset Number of rows to offset
    * @return $this Self reference
    */
-  public function limit($limit = null, $offset = null) {
+  public function limit($limit, $offset = null) {
     if ($limit !== null) {
       $this->limit = "LIMIT $limit";
     }
@@ -492,11 +483,11 @@ class Sparrow {
   /**
    * Adds an offset to the query
    *
-   * @param ?int $offset Number of rows to offset
+   * @param int $offset Number of rows to offset
    * @param ?int $limit Number of rows to limit
    * @return $this Self reference
    */
-  public function offset($offset = null, $limit = null) {
+  public function offset($offset, $limit = null) {
     if ($offset !== null) {
       $this->offset = "OFFSET $offset";
     }
@@ -515,7 +506,7 @@ class Sparrow {
    */
   public function distinct() {
     if (!$this->distinct) {
-      $this->distinct = 'DISTINCT';
+      $this->distinct = "DISTINCT";
     }
 
     return $this;
@@ -541,17 +532,15 @@ class Sparrow {
   /**
    * Builds a select query
    *
-   * @param array | string | '*' $fields Array of field names to select
+   * @param array<int, string> | string | '*' $fields Array of field names to select
    * @param ?int $limit Limit condition
    * @param ?int $offset Offset condition
    * @return $this Self reference
    * @throws Exception If table is not defined
    */
   public function select($fields = '*', $limit = null, $offset = null) {
-    $this->checkTable();
-
-    $fields = (is_array($fields)) ? implode(',', $fields) : $fields;
-    $this->limit($limit, $offset);
+    $this->checkTable()->limit($limit, $offset);
+    $fields = is_array($fields) ? implode(',', $fields) : $fields;
 
     $this->sql(array(
       'SELECT',
@@ -586,23 +575,15 @@ class Sparrow {
     }
 
     $keys = implode(',', array_keys($data));
+    $values = implode(',', array_values(array_map(array($this, 'quote'), $data)));
 
-    $values = implode(',', array_values(
-      array_map(
-        array($this, 'quote'),
-        $data
-      )
-    ));
-
-    $this->sql(array(
+    return $this->sql(array(
       'INSERT INTO',
       $this->table,
       "($keys)",
       'VALUES',
       "($values)"
     ));
-
-    return $this;
   }
 
   /**
@@ -612,7 +593,7 @@ class Sparrow {
    * @return $this Self reference
    * @throws Exception If table is not defined
    */
-  public function update($data) {
+  public function update(array $data) {
     $this->checkTable();
 
     if (!$data) {
@@ -623,21 +604,19 @@ class Sparrow {
 
     if (is_array($data)) {
       foreach ($data as $key => $value) {
-        $values[] = (is_numeric($key)) ? $value : "$key={$this->quote($value)}";
+        $values[] = is_numeric($key) ? $value : "$key={$this->quote($value)}";
       }
     } else {
       $values[] = $data;
     }
 
-    $this->sql(array(
+    return $this->sql(array(
       'UPDATE',
       $this->table,
       'SET',
       implode(',', $values),
       $this->where
     ));
-
-    return $this;
   }
 
   /**
@@ -654,11 +633,7 @@ class Sparrow {
       $this->where($where);
     }
 
-    return $this->sql(array(
-      'DELETE FROM',
-      $this->table,
-      $this->where
-    ));
+    return $this->sql(array('DELETE FROM', $this->table, $this->where));
   }
 
   /**
@@ -669,11 +644,11 @@ class Sparrow {
    */
   public function sql($sql = null) {
     if ($sql !== null) {
-      $this->sql = trim(
-        is_array($sql)
-          ? array_reduce($sql, array($this, 'build'))
-          : $sql
-      );
+      $reducer = function ($sql, $input) {
+        return $input ? "$sql $input" : $sql;
+      };
+
+      $this->sql = trim(is_array($sql) ? array_reduce($sql, $reducer) : $sql);
 
       return $this;
     }
@@ -688,31 +663,31 @@ class Sparrow {
    * Sets the database connection
    *
    * @param string | array{
-   *   type: string,
+   *   type: 'mysqli' | 'mysql' | 'pgsql' | 'sqlite' | 'sqlite3' | 'pdomysql' | 'pdosqlite' | 'pdopgsql',
    *   hostname: string | null,
    *   database: string | null,
    *   username: string | null,
    *   password: string | null,
-   *   port: string | null
-   * } | object | resource $db Database connection string, array or object
+   *   port: int | null
+   * } | mysqli | SQLite3 | PDO | resource $db Database connection string, array or object
    * @throws Exception For connection error
    */
   public function setDb($db) {
     $this->db = null;
 
-    if (is_string($db)) { // Connection string
+    if (is_string($db)) {
       return $this->setDb($this->parseConnection($db));
     }
 
-    if (is_array($db)) { // Connection information
+    if (is_array($db)) {
       $quotes = array('"', "'");
 
-      if (
-        (
-          in_array($db['hostname'][0], $quotes)
-          && in_array($db['database'][-1], $quotes)
-        ) || strlen($db['hostname']) <= 2
-      ) {
+      $hostNameHaveQuotes = (
+        in_array($db['hostname'][0], $quotes)
+        && in_array($db['database'][-1], $quotes)
+      );
+
+      if ($hostNameHaveQuotes || strlen($db['hostname']) <= 2) {
         $db['hostname'] .= ":/{$db['database']}";
         $db['hostname'] = str_replace($quotes[0], '', $db['hostname']);
         $db['hostname'] = str_replace($quotes[1], '', $db['hostname']);
@@ -735,15 +710,13 @@ class Sparrow {
           break;
 
         case 'pgsql':
-          $str = sprintf(
+          $this->db = pg_connect(sprintf(
             'host=%s dbname=%s user=%s password=%s',
             $db['hostname'],
             $db['database'],
             $db['username'],
             $db['password']
-          );
-
-          $this->db = pg_connect($str);
+          ));
 
           break;
 
@@ -786,10 +759,9 @@ class Sparrow {
           $db['type'] = 'pdo';
 
           break;
-      }
 
-      if (!$this->db) {
-        throw new Exception('Undefined database.');
+        default:
+          throw new Exception('Undefined database.');
       }
 
       $this->db_type = $db['type'];
@@ -816,11 +788,7 @@ class Sparrow {
     $this->db_type = $type;
   }
 
-  /**
-   * Gets the database connection
-   *
-   * @return object | resource Database connection
-   */
+  /** Gets the database connection */
   public function getDb() {
     return $this->db;
   }
@@ -828,8 +796,9 @@ class Sparrow {
   /**
    * Gets the database type.
    *
+   * @template T of object
    * @param null | object | resource $db Database object or resource
-   * @return null | 'mysql' | 'sqlite' | 'pgsql' | class-string Database type
+   * @return null | 'mysql' | 'sqlite' | 'pgsql' | class-string<T> Database type
    */
   public function getDbType($db) {
     if (is_object($db)) {
@@ -855,37 +824,28 @@ class Sparrow {
   /**
    * Executes a sql statement
    *
-   * @param string $key Cache key
+   * @param ?string $key Cache key
    * @param int $expire Expiration time in seconds
-   * @return mixed Query results object
+   * @return null | mixed | PDOStatement | mysqli_result | SQLite3Result | resource Query results object
    * @throws Exception When database is not defined
    */
-  public function execute($key = '', $expire = 0) {
+  public function execute($key = null) {
     if (!$this->db) {
       throw new Exception('Database is not defined.');
     }
 
-    if ($key !== '') {
-      $result = $this->fetch($key);
-
-      if ($this->is_cached) {
-        return $result;
-      }
+    if ($key !== null && $this->is_cached) {
+      return $this->fetch($key);
     }
 
     $result = null;
-
     $this->is_cached = false;
-    $this->num_rows = 0;
-    $this->affected_rows = 0;
-    $this->insert_id = -1;
+    $this->num_rows = null;
+    $this->affected_rows = null;
+    $this->insert_id = null;
     $this->last_query = $this->sql;
 
     if ($this->stats_enabled) {
-      if (!$this->stats) {
-        $this->stats = array('queries' => array());
-      }
-
       $this->query_time = microtime(true);
     }
 
@@ -895,6 +855,7 @@ class Sparrow {
       switch ($this->db_type) {
         case 'pdo':
           try {
+            assert($this->db instanceof PDO);
             $result = $this->db->prepare($this->sql);
 
             if (!$result) {
@@ -906,30 +867,29 @@ class Sparrow {
               $this->affected_rows = $result->rowCount();
               $this->insert_id = $this->db->lastInsertId();
             }
-          } catch (PDOException $ex) {
-            $error = $ex->getMessage();
+          } catch (PDOException $exception) {
+            $error = $exception->getMessage();
           }
 
           break;
 
         case 'mysql':
         case 'mysqli':
+          assert($this->db instanceof mysqli);
           $result = $this->db->query($this->sql);
 
           if (!$result) {
             $error = $this->db->error;
           } else {
-            if (is_object($result)) {
-              $this->num_rows = $result->num_rows;
-            } else {
-              $this->affected_rows = $this->db->affected_rows;
-            }
+            $this->num_rows = $result ? $result->num_rows : null;
+            $this->affected_rows = $this->db->affected_rows;
             $this->insert_id = $this->db->insert_id;
           }
 
           break;
 
         case 'pgsql':
+          assert(is_resource($this->db));
           $result = pg_query($this->db, $this->sql);
 
           if (!$result) {
@@ -944,20 +904,22 @@ class Sparrow {
 
         case 'sqlite':
         case 'sqlite3':
+          assert($this->db instanceof SQLite3);
           $result = $this->db->query($this->sql);
 
-          if ($result === false) {
+          if (!$result) {
             $error = $this->db->lastErrorMsg();
           } else {
-            $this->num_rows = 0;
-            $this->affected_rows = ($result) ? $this->db->changes() : 0;
+            // TODO: calculate num rows
+            // $this->num_rows = 0;
+            $this->affected_rows = $result ? $this->db->changes() : 0;
             $this->insert_id = $this->db->lastInsertRowId();
           }
 
           break;
       }
 
-      if ($error !== null) {
+      if ($error) {
         if ($this->show_sql) {
           $error .= "\nSQL: $this->sql";
         }
@@ -977,24 +939,26 @@ class Sparrow {
       );
     }
 
+    if (is_bool($result)) {
+      $result = null;
+    }
+
     return $result;
   }
 
   /**
    * Fetch multiple rows from a select query
    *
-   * @param string $key Cache key
-   * @param int $expire Expiration time in seconds
+   * @param ?string $key Cache key
    * @return array<int, array<string, null | int | float | string | bool>> Rows
    */
-  public function many($key = '', $expire = 0) {
+  public function many($key = null) {
     if (!$this->sql) {
       $this->select();
     }
 
     $data = array();
-
-    $result = $this->execute($key, $expire);
+    $result = $this->execute($key);
 
     if ($this->is_cached) {
       $data = $result;
@@ -1005,13 +969,16 @@ class Sparrow {
     } else {
       switch ($this->db_type) {
         case 'pdo':
+          assert($result instanceof PDOStatement);
           $data = $result->fetchAll(PDO::FETCH_ASSOC);
-          $this->num_rows = sizeof($data);
+          $this->num_rows = count($data);
 
           break;
 
         case 'mysql':
         case 'mysqli':
+          assert($result instanceof mysqli_result);
+
           if (function_exists('mysqli_fetch_all')) {
             $data = $result->fetch_all(MYSQLI_ASSOC);
           } else {
@@ -1019,11 +986,13 @@ class Sparrow {
               $data[] = $row;
             }
           }
+
           $result->close();
 
           break;
 
         case 'pgsql':
+          assert(is_resource($result));
           $data = pg_fetch_all($result);
           pg_free_result($result);
 
@@ -1031,124 +1000,114 @@ class Sparrow {
 
         case 'sqlite':
         case 'sqlite3':
-          if ($result) {
-            while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-              $data[] = $row;
-            }
+          assert($result instanceof SQLite3Result);
 
-            $result->finalize();
-            $this->num_rows = sizeof($data);
+          while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $data[] = $row;
           }
+
+          $result->finalize();
+          $this->num_rows = count($data);
 
           break;
       }
     }
 
-    if (!$this->is_cached && $key !== '') {
-      $this->store($key, $data, $expire);
+    if (!$this->is_cached && $key !== null) {
+      $this->store($key, $data);
     }
 
     return $data;
   }
 
   /**
-   * Fetch a single row from a select query.
+   * Fetch a single row from a select query
    *
-   * @param string $key Cache key
-   * @param int $expire Expiration time in seconds
+   * @param ?string $key Cache key
    * @return array<string, int | float | string | bool | null> Row
    */
-  public function one($key = '', $expire = 0) {
+  public function one($key = null) {
     if (!$this->sql) {
       $this->limit(1)->select();
     }
 
-    $data = $this->many($key, $expire);
-    $row = $data ? $data[0] : array();
+    $data = $this->many($key);
 
-    return $row;
+    return $data ? $data[0] : array();
   }
 
   /**
    * Fetch a value from a field
    *
    * @param string $name Database field name
-   * @param string $key Cache key
-   * @param int $expire Expiration time in seconds
+   * @param ?string $key Cache key
    * @return null | int | float | string | bool Row value
    */
-  public function value($name, $key = '', $expire = 0) {
-    $row = $this->one($key, $expire);
-    $value = $row ? $row[$name] : null;
+  public function value($name, $key = null) {
+    $row = $this->one($key);
 
-    return $value;
+    return $row ? $row[$name] : null;
   }
 
   /**
    * Gets the min value for a specified field
    *
    * @param string $field Field name
-   * @param int $expire Expiration time in seconds
-   * @param string $key Cache key
+   * @param ?string $key Cache key
    * @return int | string | null
    */
-  public function min($field, $key = '', $expire = 0) {
-    return $this->select("MIN($field) min_value")->value('min_value', $key, $expire);
+  public function min($field, $key = null) {
+    return $this->select("MIN($field) min_value")->value('min_value', $key);
   }
 
   /**
    * Gets the max value for a specified field
    *
    * @param string $field Field name
-   * @param int $expire Expiration time in seconds
-   * @param string $key Cache key
+   * @param ?string $key Cache key
    * @return int | string | null
    */
-  public function max($field, $key = '', $expire = 0) {
-    return $this->select("MAX($field) max_value")->value('max_value', $key, $expire);
+  public function max($field, $key = null) {
+    return $this->select("MAX($field) max_value")->value('max_value', $key);
   }
 
   /**
    * Gets the sum value for a specified field
    *
    * @param string $field Field name
-   * @param int $expire Expiration time in seconds
-   * @param string $key Cache key
+   * @param ?string $key Cache key
    * @return int
    */
-  public function sum($field, $key = '', $expire = 0) {
-    return $this->select("SUM($field) sum_value")->value('sum_value', $key, $expire);
+  public function sum($field, $key = null) {
+    return (int) $this->select("SUM($field) sum_value")->value('sum_value', $key);
   }
 
   /**
    * Gets the average value for a specified field
    *
    * @param string $field Field name
-   * @param int $expire Expiration time in seconds
-   * @param string $key Cache key
+   * @param ?string $key Cache key
    * @return float
    */
-  public function avg($field, $key = '', $expire = 0) {
-    return $this->select("AVG($field) avg_value")->value('avg_value', $key, $expire);
+  public function avg($field, $key = null) {
+    return (float) $this->select("AVG($field) avg_value")->value('avg_value', $key);
   }
 
   /**
    * Gets a count of records for a table
    *
    * @param string | '*' $field Field name
-   * @param string $key Cache key
-   * @param int $expire Expiration time in seconds
+   * @param ?string $key Cache key
    * @return int
    */
-  public function count($field = '*', $key = '', $expire = 0) {
-    return $this->select("COUNT($field) num_rows")->value('num_rows', $key, $expire);
+  public function count($field = '*', $key = null) {
+    return (int) $this->select("COUNT($field) num_rows")->value('num_rows', $key);
   }
 
   /**
    * Wraps quotes around a string and escapes the content for a string parameter
    *
-   * @param mixed $value mixed value
-   * @return string Quoted value
+   * @return ($value is null ? 'NULL' : string) Quoted value
    */
   public function quote($value) {
     if ($value === null) {
@@ -1156,16 +1115,22 @@ class Sparrow {
     }
 
     if (is_string($value)) {
-      if ($this->db !== null) {
+      if ($this->db) {
         switch ($this->db_type) {
           case 'pdo':
+            assert($this->db instanceof PDO);
+
             return $this->db->quote($value);
 
           case 'mysql':
           case 'mysqli':
-            return "'" . $this->db->real_escape_string($value) . "'";
+            assert($this->db instanceof mysqli);
+
+            return "'{$this->db->real_escape_string($value)}'";
 
           case 'pgsql':
+            assert(is_resource($this->db));
+
             return "'" . pg_escape_string($this->db, $value) . "'";
 
           case 'sqlite':
@@ -1183,7 +1148,7 @@ class Sparrow {
       return "'$value'";
     }
 
-    return $value;
+    return (string) $value;
   }
 
   ///////////////////
@@ -1192,20 +1157,29 @@ class Sparrow {
   /**
    * Sets the cache connection
    *
-   * @param string | object $cache Cache connection string or object
+   * @param array{
+   *   type: 'memcache' | 'memcached' | 'string',
+   *   hostname: string | null,
+   *   database: string | null,
+   *   username: string | null,
+   *   password: string | null,
+   *   port: int | null
+   * } | string | Memcache | Memcached $cache Cache connection string or object
    * @throws Exception For invalid cache type
    */
   public function setCache($cache) {
-    $this->cache = null;
-
     if (is_string($cache)) { // Connection string
       if ($cache[0] === '.' || $cache[0] === '/') {
         $this->cache = $cache;
         $this->cache_type = 'file';
-      } else {
-        $this->setCache($this->parseConnection($cache));
+
+        return;
       }
-    } elseif (is_array($cache)) { // Connection information
+
+      return $this->setCache($this->parseConnection($cache));
+    }
+
+    if (is_array($cache)) { // Connection information
       switch ($cache['type']) {
         case 'memcache':
           $this->cache = new Memcache;
@@ -1230,9 +1204,9 @@ class Sparrow {
       $this->cache_type = $cache['type'];
     } elseif (is_object($cache)) { // Cache object
       $type = strtolower(get_class($cache));
-      static $cache_types = array('memcached', 'memcache', 'xcache');
+      static $cacheTypes = array('memcached', 'memcache', 'xcache');
 
-      if (!in_array($type, $cache_types)) {
+      if (!in_array($type, $cacheTypes)) {
         throw new Exception('Invalid cache type.');
       }
 
@@ -1241,11 +1215,7 @@ class Sparrow {
     }
   }
 
-  /**
-   * Gets the cache instance
-   *
-   * @return object Cache instance
-   */
+  /** Gets the cache instance */
   public function getCache() {
     return $this->cache;
   }
@@ -1254,7 +1224,7 @@ class Sparrow {
    * Stores a value in the cache
    *
    * @param string $key Cache key
-   * @param mixed $value Value to store
+   * @param int | float | string | bool | null $value Value to store
    * @param int $expire Expiration time in seconds
    */
   public function store($key, $value, $expire = 0) {
@@ -1262,19 +1232,25 @@ class Sparrow {
 
     switch ($this->cache_type) {
       case 'memcached':
+        assert($this->cache instanceof Memcached);
         $this->cache->set($key, $value, $expire);
+
         break;
 
       case 'memcache':
+        assert($this->cache instanceof Memcache);
         $this->cache->set($key, $value, 0, $expire);
+
         break;
 
       case 'apc':
         apc_store($key, $value, $expire);
+
         break;
 
       case 'xcache':
         xcache_set($key, $value, $expire);
+
         break;
 
       case 'file':
@@ -1282,36 +1258,41 @@ class Sparrow {
 
         $data = array(
           'value' => $value,
-          'expire' => ($expire > 0) ? (time() + $expire) : 0
+          'expire' => $expire > 0 ? (time() + $expire) : 0
         );
 
         file_put_contents($file, serialize($data));
+
         break;
 
       default:
         $this->cache[$key] = $value;
     }
+
+    return $this;
   }
 
   /**
    * Fetches a value from the cache
    *
    * @param string $key Cache key
-   * @return mixed Cached value
+   * @return int | float | string | bool | null Cached value
    */
   public function fetch($key) {
     $key = $this->key_prefix . $key;
 
     switch ($this->cache_type) {
       case 'memcached':
+        assert($this->cache instanceof Memcached);
         $value = $this->cache->get($key);
-        $this->is_cached = ($this->cache->getResultCode() === Memcached::RES_SUCCESS);
+        $this->is_cached = $this->cache->getResultCode() === Memcached::RES_SUCCESS;
 
         return $value;
 
       case 'memcache':
+        assert($this->cache instanceof Memcache);
         $value = $this->cache->get($key);
-        $this->is_cached = ($value !== false);
+        $this->is_cached = $value !== false;
 
         return $value;
 
@@ -1320,13 +1301,15 @@ class Sparrow {
 
       case 'xcache':
         $this->is_cached = xcache_isset($key);
+
         return xcache_get($key);
 
       case 'file':
-        $file = $this->cache . '/' . md5($key);
+        $file = "$this->cache/" . md5($key);
 
         if ($this->is_cached = file_exists($file)) {
           $data = unserialize(file_get_contents($file));
+
           if ($data['expire'] === 0 || time() < $data['expire']) {
             return $data['value'];
           } else {
@@ -1344,19 +1327,22 @@ class Sparrow {
   }
 
   /**
-   * Clear a value from the cache.
+   * Clear a value from the cache
    *
    * @param string $key Cache key
-   * @return mixed
    */
   public function clear($key) {
     $key = $this->key_prefix . $key;
 
     switch ($this->cache_type) {
       case 'memcached':
+        assert($this->cache instanceof Memcached);
+
         return $this->cache->delete($key);
 
       case 'memcache':
+        assert($this->cache instanceof Memcache);
+
         return $this->cache->delete($key);
 
       case 'apc':
@@ -1370,52 +1356,60 @@ class Sparrow {
         if (file_exists($file)) {
           return unlink($file);
         }
+
         return false;
 
       default:
         if (isset($this->cache[$key])) {
           unset($this->cache[$key]);
+
           return true;
         }
+
         return false;
     }
   }
 
-  /**
-   * Flushes out the cache.
-   */
+  /** Flushes out the cache */
   public function flush() {
     switch ($this->cache_type) {
       case 'memcached':
+        assert($this->cache instanceof Memcached);
         $this->cache->flush();
+
         break;
 
       case 'memcache':
+        assert($this->cache instanceof Memcache);
         $this->cache->flush();
+
         break;
 
       case 'apc':
         apc_clear_cache();
+
         break;
 
-        // TODO implement xcache flush
-        // case 'xcache':
-        //   xcache_clear_cache();
-        //   break;
+      case 'xcache':
+        xcache_clear_cache(0);
+        break;
 
       case 'file':
         if ($handle = opendir($this->cache)) {
-          while (false !== ($file = readdir($handle))) {
+          while (($file = readdir($handle)) !== false) {
             if ($file !== '.' && $file !== '..') {
-              unlink($this->cache . '/' . $file);
+              unlink("$this->cache/$file");
             }
           }
+
           closedir($handle);
         }
+
         break;
 
       default:
         $this->cache = array();
+
         break;
     }
   }

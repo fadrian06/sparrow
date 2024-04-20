@@ -27,7 +27,7 @@ final class ConnectionExamplesTest extends TestCase {
   }
 
   function testCanConnectToMysqlDatabaseFromConnectionString() {
-    $this->sparrow->setDb("mysql://$this->user:$this->password@$this->host:$this->port/$this->dbName");
+    $this->sparrow->setDb("MYSQL://$this->user:$this->password@$this->host:$this->port/$this->dbName");
 
     self::assertInstanceOf('mysqli', $this->sparrow->getDb());
   }
@@ -60,7 +60,7 @@ final class ConnectionExamplesTest extends TestCase {
   }
 
   function testCanConnectToMysqlDatabaseFromAPdoConnectionString() {
-    $this->sparrow->setDb("pdomysql://$this->user:$this->password@$this->host:$this->password/$this->dbName");
+    $this->sparrow->setDb("PDOmysql://$this->user:$this->password@$this->host:$this->password/$this->dbName");
 
     self::assertInstanceOf('PDO', $this->sparrow->getDb());
   }
@@ -78,13 +78,13 @@ final class ConnectionExamplesTest extends TestCase {
   }
 
   function testCanConnectToSqliteDatabaseFromConnectionString() {
-    $this->sparrow->setDb('sqlite://' . __DIR__ . '/Northwind.db');
+    $this->sparrow->setDb('SQLite://' . __DIR__ . '/Northwind.db');
 
     self::assertInstanceOf('SQLite3', $this->sparrow->getDb());
   }
 
   function testCanConnectToSqliteDatabaseFromPdoConnectionString() {
-    $this->sparrow->setDb('pdosqlite://' . __DIR__ . '/Northwind.db');
+    $this->sparrow->setDb('pdoSQLITE://' . __DIR__ . '/Northwind.db');
 
     self::assertInstanceOf('PDO', $this->sparrow->getDb());
   }
